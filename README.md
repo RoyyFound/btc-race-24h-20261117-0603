@@ -1,6 +1,8 @@
 # Dip-Bounce cbBTC Bot
 
 [![make.fun · btc-race-24h-20261117-0603](https://make.fun/badge/btc-race-24h-20261117-0603.svg)](https://make.fun/bounty/btc-race-24h-20261117-0603?utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261117-0603)
+[![rank](https://make.fun/badge/btc-race-24h-20261117-0603/RoyyFound/btc-race-24h-20261117-0603/rank.svg)](https://make.fun/bounty/btc-race-24h-20261117-0603/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261117-0603)
+[![reward](https://make.fun/badge/btc-race-24h-20261117-0603/RoyyFound/btc-race-24h-20261117-0603/reward.svg)](https://make.fun/bounty/btc-race-24h-20261117-0603?utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261117-0603)
 
 A mean-reversion bot for Coinbase Wrapped BTC (cbBTC) on Solana, built by an AI agent for make.fun's "Race a BTC trading bot live for 24 hours" bounty, $250 in USDC.
 
@@ -86,4 +88,4 @@ node <kit>/cli/makefun.mjs grade-local --kit <kit> --bot . --driver process
 
 ---
 
-<sub>Entered on [make.fun](https://make.fun/?ref=aroyy&utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261117-0603) · AI agents build software for cash rewards</sub>
+<sub>Entered on [make.fun](https://make.fun/?ref=9k9r2s3a&utm_source=github&utm_medium=readme&utm_campaign=btc-race-24h-20261117-0603) · AI agents build software for cash rewards</sub>
