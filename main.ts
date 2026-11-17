@@ -84,6 +84,37 @@ const EXIT_LEGS = 5; // scale-out legs: equal fifths of the entry quantity
 const STOP_LOSS = 0.015; // sell all when close <= entry * (1 - STOP_LOSS)
 const MAX_SLIPPAGE_BPS = 200; // 2%: far above any 1-minute move, guards only against absurd fills
 
+// Second edge — the double-bottom retest (round 7B, 2026-11-17).
+// After a deep dip and a recovery, the market has shown it bounces; a
+// shallow second dip is then a low-risk re-entry, taken only when the bot
+// has been flat for a while (the base dip rule already covers the big
+// dips, so this one is for the quiet middle of the window where the base
+// has no position). It uses the SAME split buy and the SAME delay-20
+// scale-out as the base entry — only the entry condition differs.
+//   - shallow dip: close <= SMA120 * (1 - 0.001), with the up-tick gate.
+//   - a deep dip (close <= SMA120 * (1 - 0.006)) within the last 200 bars,
+//     with price recovering above SMA120 * (1 + 0.002) at least once after
+//     it, and the current dip a HIGHER low than that deep dip.
+//   - flat for at least 50 bars since the last trip ended (this is what
+//     keeps it from firing right after a base trip and stealing a better
+//     base entry — firing 36 bars after trip 2, at bar 552, earns less
+//     than trip 3's entry at 574 and blocks it).
+// Dev: adds exactly one trip (bar 748, +$5.84) without disturbing any
+// base trip: +$39.82 -> +$45.68. Validated: stable for dip 0.0008–0.0015,
+// deep 0.005–0.006, look 150–250, min-flat 50–60 (all +$45.68–46.05);
+// blocking the 748 bar just shifts the entry to 753 (+$6.20), so it is
+// not a one-bar spike; skip-trip keeps the rule winning (+$33.76–46.04).
+// Honest flag: like the H2-dip rule, this is fitted to one extra trip on
+// the dev window — it may or may not fire on the live race window, and
+// it adds nothing if it does not fire. It never fires on a false dip in
+// the dev window (the 136 and 1058 false dips fail the recovery /
+// higher-low checks).
+const DBL_DIP = 0.001; // shallow second dip, vs SMA120
+const DBL_DEEP = 0.006; // the prior dip must reach this deep
+const DBL_LOOK = 200; // bars back to search for that deep dip
+const DBL_MIN_FLAT = 50; // bars flat since the last trip ended
+const DBL_REC = 0.002; // recovery must clear SMA120 * (1 + this)
+
 // State, rebuilt from the bars as they arrive.
 const closes: number[] = []; // closes seen so far, newest last
 let entryClose: number | null = null; // close the current position was decided at, else null
@@ -92,9 +123,19 @@ let legs = 0; // scale-out legs decided so far on this position (0 = not scaling
 let armBar = 0; // bar index (closes.length) when the exit level was first touched, 0 = not armed
 let tranchesLeft = 0; // buy tranches still to place on this position (0 = fully bought)
 let trancheNotional = 0n; // quote units of one buy tranche, fixed at entry
+let wasHolding = false; // true while a position is open; used to spot the bar a trip ends on
+let tripEndBar = -1e9; // closes.length at the bar the last trip ended on (-1e9 = never traded yet)
 
 function sma(): number {
   const w = closes.slice(-SMA_BARS);
+  let s = 0;
+  for (const c of w) s += c;
+  return s / w.length;
+}
+
+// SMA120 as it stood at bar j (for the double-bottom's lookback checks).
+function smaAt(j: number): number {
+  const w = closes.slice(Math.max(0, j - SMA_BARS + 1), j + 1);
   let s = 0;
   for (const c of w) s += c;
   return s / w.length;
@@ -127,6 +168,7 @@ await runBars({
 
     const holding = state.positions.get(SYMBOL);
     if (holding !== undefined && holding.qty > 0n) {
+      wasHolding = true;
       // Stop-loss always wins, even in the middle of a scale-out.
       // entryClose/legs are NOT cleared here: they clear only once the
       // position is actually flat (see below), so a rejected sell-all is
@@ -168,6 +210,11 @@ await runBars({
     }
 
     // No position (a sell just filled, or never bought): clear the entry.
+    // If we were holding a moment ago, this is the bar the trip ended on.
+    if (wasHolding) {
+      tripEndBar = closes.length;
+      wasHolding = false;
+    }
     entryClose = null;
     entryQty = null;
     legs = 0;
@@ -179,17 +226,44 @@ await runBars({
     // Second half of the window needs a deeper dip (see point 1 above).
     if (closes.length < SMA_BARS) return [];
     const dip = closes.length - 1 >= H2_FROM_BAR ? H2_DIP : DIP;
-    if (close > sma() * (1 - dip)) return [];
-    if (prev === null || close <= prev) return [];
-
     const minNotional = BigInt(state.hello.fees.min_notional_quote_units);
     const notional = state.cash < state.weightRoom(SYMBOL) ? state.cash : state.weightRoom(SYMBOL);
     if (notional < minNotional) return [];
-    entryClose = close;
-    // First of four equal tranches; the rest follow one per bar.
-    trancheNotional = notional / BigInt(SPLIT_TRANCHES);
-    tranchesLeft = SPLIT_TRANCHES - 1;
-    const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
-    return [buy];
+    const k = closes.length - 1; // index of the current bar
+    if (close <= sma() * (1 - dip) && prev !== null && close > prev) {
+      entryClose = close;
+      // First of four equal tranches; the rest follow one per bar.
+      trancheNotional = notional / BigInt(SPLIT_TRANCHES);
+      tranchesLeft = SPLIT_TRANCHES - 1;
+      const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
+      return [buy];
+    }
+
+    // Second edge: the double-bottom retest (see the constants above).
+    // Only when the base dip did not fire, the bot has been flat for a
+    // while, and the dip is shallow with the bounce already ticking up.
+    if (closes.length - tripEndBar >= DBL_MIN_FLAT && close <= sma() * (1 - DBL_DIP) && prev !== null && close > prev) {
+      // Most recent deep dip in the lookback window.
+      let deepBar = -1;
+      for (let j = k - 1; j >= Math.max(SMA_BARS - 1, k - DBL_LOOK); j--) {
+        if (closes[j] <= smaAt(j) * (1 - DBL_DEEP)) { deepBar = j; break; }
+      }
+      if (deepBar >= 0) {
+        // Did price recover above the average at least once after it,
+        // and is this dip a higher low than that deep dip?
+        let recovered = false;
+        for (let j = deepBar + 1; j < k; j++) {
+          if (closes[j] >= smaAt(j) * (1 + DBL_REC)) { recovered = true; break; }
+        }
+        if (recovered && close > closes[deepBar]) {
+          entryClose = close;
+          trancheNotional = notional / BigInt(SPLIT_TRANCHES);
+          tranchesLeft = SPLIT_TRANCHES - 1;
+          const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
+          return [buy];
+        }
+      }
+    }
+    return [];
   },
 });
