@@ -35,12 +35,15 @@ Measured with a local simulator that replicates the replay's fill model
 (fill at the next bar's open, 4 bps fee, 2 bps slippage, constant-product
 price impact against the bar's open depth):
 
-| Strategy | Net PnL | Trades | Max drawdown |
+| Strategy | Net PnL (real `grade-local`) | Trades | Max drawdown |
 |---|---|---|---|
 | Buy-and-hold (baseline) | +$1.07 | 1 | 2.12% |
-| EMA(8)/EMA(21) cross | -$18.51 | 42 | 2.02% |
-| Dip-buy SMA(120), no gate | +$12.98 | 8 | 0.99% |
-| **Dip-buy + bounce gate (this bot)** | **+$14.61** | **8** | **0.96%** |
+| Momentum (baseline) | +$2.45 | 1 | 2.12% |
+| Hold-cash (baseline) | $0.00 | 0 | 0.00% |
+| RSI-Bollinger (baseline) | -$24.25 | 11 | 2.79% |
+| ADX-momentum (baseline) | -$32.66 | 26 | 3.60% |
+| EMA(8)/EMA(21) cross (baseline) | -$106.21 | 68 | 10.96% |
+| **Dip-buy + bounce gate (this bot)** | **+$14.61** | **8** | **1.04%** |
 
 The EMA-cross loses because 1-minute BTC whipsaws: it trades 42 times and
 the ~26–38 bps round-trip cost eats every small win. The dip-buy trades
