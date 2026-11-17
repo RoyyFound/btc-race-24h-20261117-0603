@@ -6,16 +6,21 @@
 //      AND the close is above the previous bar's close (the bounce has
 //      started; no catching a falling knife mid-drop).
 //   2. Sell in five equal legs once the close climbs back to >= 0.4% above
-//      the same SMA: a fifth of the position at the first touch, then a fifth
-//      on each of the next four bars. Banking the bounce in equal slices
-//      beats the old three geometric legs on the dev window (same 4 entries,
-//      +$19.01 vs +$18.37, both halves better: H1 +$18.23 vs +$17.79, H2
-//      +$0.78 vs +$0.58, max drawdown 0.94% vs 0.96%), and it is a flat
-//      plateau, not a tuned spike: 4, 5, 6, 7 and 8 equal legs all land
-//      between +$18.92 and +$19.07, and every one of them beats the
-//      delay-only control (sell everything at the second touch: +$15.37).
-//      It is not a wider exit either: all five legs complete within 4 bars
-//      of the touch, so the position never rides the window the way a wider
+//      the same SMA — but WAIT 20 bars after the first touch before the
+//      first leg. On the dev window the bounce keeps running for roughly
+//      20 bars past the target before fading (the recovery spikes to
+//      +2.12% and +1.97% above the entries, 142 and 392 bars after entry),
+//      so selling at the touch leaves most of the move on the table:
+//      waiting 20 bars lifts the dev PnL from +$19.01 to +$31.79 (same
+//      4 entries, H1 +$32.10 vs +$18.23; H2 -$0.26 vs +$0.78 — the one
+//      H2 trip tops out at +0.29% gross, so it is near-breakeven either
+//      way and the delay costs ~$1 there). The delay curve is a smooth
+//      hump, not a spike: 15 bars +$21.51, 20 bars +$31.79, 25 bars
+//      +$30.50, 30 bars +$26.07, 40 bars +$26.31. Banking the bounce in
+//      equal slices after the wait beats the old immediate scale-out
+//      (+$19.01) and the delay-only control (+$15.37). It is not a wider
+//      exit either: all five legs complete within 4 bars of the wait
+//      expiring, so the position never rides the window the way a wider
 //      exit level does (exit vs SMA(180) instead: +$24.21, but the whole
 //      gain rides on one 140-bar trip while another trip gets worse —
 //      rejected as drift-riding, same family as the wide exits round 1
@@ -44,7 +49,8 @@ const SYMBOL = 'CBBTC';
 // Strategy parameters (fractions, tuned on the dev window).
 const SMA_BARS = 120; // lookback of the moving average, in bars
 const DIP = 0.006; // buy when close <= SMA * (1 - DIP)
-const BOUNCE_EXIT = 0.004; // start selling when close >= SMA * (1 + BOUNCE_EXIT)
+const BOUNCE_EXIT = 0.004; // start the exit wait when close >= SMA * (1 + BOUNCE_EXIT)
+const EXIT_DELAY = 20; // bars to wait after the first touch before leg 1
 const EXIT_LEGS = 5; // scale-out legs: equal fifths of the entry quantity
 const STOP_LOSS = 0.015; // sell all when close <= entry * (1 - STOP_LOSS)
 const MAX_SLIPPAGE_BPS = 200; // 2%: far above any 1-minute move, guards only against absurd fills
@@ -54,6 +60,7 @@ const closes: number[] = []; // closes seen so far, newest last
 let entryClose: number | null = null; // close the current position was decided at, else null
 let entryQty: bigint | null = null; // quantity held when the scale-out started, else null
 let legs = 0; // scale-out legs decided so far on this position (0 = not scaling out)
+let armBar = 0; // bar index (closes.length) when the exit level was first touched, 0 = not armed
 
 function sma(): number {
   const w = closes.slice(-SMA_BARS);
@@ -105,11 +112,18 @@ await runBars({
         }
         return [sellFifth(holding.qty)];
       }
-      // First touch of the exit level: start scaling out.
-      if (close >= sma() * (1 + BOUNCE_EXIT)) {
+      // Armed and the wait is over: start scaling out.
+      if (armBar > 0 && closes.length - armBar >= EXIT_DELAY) {
         legs = 1;
         entryQty = holding.qty;
+        armBar = 0;
         return [sellFifth(holding.qty)];
+      }
+      // First touch of the exit level: arm the wait, do not sell yet.
+      // The bounce usually runs on for ~20 bars past the target, so the
+      // first leg waits; the stop-loss above still guards the wait.
+      if (armBar === 0 && close >= sma() * (1 + BOUNCE_EXIT)) {
+        armBar = closes.length;
       }
       return [];
     }
@@ -118,6 +132,7 @@ await runBars({
     entryClose = null;
     entryQty = null;
     legs = 0;
+    armBar = 0;
 
     // Entry: dip below the average, with the bounce already ticking up.
     if (closes.length < SMA_BARS) return [];

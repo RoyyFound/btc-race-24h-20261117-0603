@@ -16,12 +16,12 @@ one thing, patiently:
 2. **Wait for the bounce to start.** The dip alone is not enough: the close
    must also be above the previous bar's close (an up-tick), so we do not
    catch a falling knife mid-drop.
-3. **Take the bounce in five equal legs, don't dump it.** Sell a fifth of
-   the position when the close climbs back to 0.4% above the same 120-bar
-   average, then a fifth on each of the next four bars — banking part of the
-   bounce at the target while letting the rest ride four more bars. Cut the
-   whole position at 1.5% below the entry price, even in the middle of a
-   scale-out, whichever comes first.
+3. **Take the bounce in five equal legs, but wait 20 bars after the
+   target is first touched before the first leg.** The bounce usually
+   keeps running for ~20 bars past the 0.4%-above-average target before
+   fading, so selling at the touch leaves most of the move behind. Cut
+   the whole position at 1.5% below the entry price, even in the middle
+   of the wait or the scale-out, whichever comes first.
 4. **One position, full size.** Long only, at most one open position, sized
    to the full cash balance, because a $1,000 account cannot afford to
    dribble: every fill pays a fixed fee + slippage + pool impact, so half
@@ -46,22 +46,23 @@ price impact against the bar's open depth):
 | RSI-Bollinger (baseline) | -$24.25 | 11 | 2.79% |
 | ADX-momentum (baseline) | -$32.66 | 26 | 3.60% |
 | EMA(8)/EMA(21) cross (baseline) | -$106.21 | 68 | 10.96% |
-| **Dip-buy + 5-leg scale-out (this bot)** | **+$19.01** | **24** | **0.94%** |
+| **Dip-buy + 20-bar delayed 5-leg scale-out (this bot)** | **+$31.79** | **24** | **1.04%** |
 
 The EMA-cross loses because 1-minute BTC whipsaws: it trades 42 times and
 the ~26–38 bps round-trip cost eats every small win. The dip-buy trades
 only 4 round trips in 24 hours (24 filled orders: 1 buy + 5 scale-out
 sells each) and each one clears the cost by a wide margin; all 4 round
-trips won on the dev window. Selling in five equal legs instead of all at
-once added +$4.40 over the single-exit version (+$14.61) on the same window
-— same 4 entries, every round trip better — because the bounce usually runs
-a little past the first touch of the target before fading. Five legs also
-beat the previous three-leg version (+$18.37) on both halves of the window
-(H1 +$18.23 vs +$17.79, H2 +$0.78 vs +$0.58), and 4–8 equal legs all land
-in the same +$18.92–$19.07 band, so the gain is a flat plateau, not a
-tuned spike; the delay-only control (sell everything at the second touch
-of the target) manages only +$15.37, so the gain is the progressive
-banking, not just waiting longer.
+trips won on the dev window. Waiting 20 bars after the exit target is
+first touched before the first scale-out leg added +$12.78 over the
+immediate scale-out version (+$19.01) on the same window — same 4 entries
+— because the recovery spikes run well past the target (+2.12% and +1.97%
+above the entries). The delay is a smooth hump (15 bars +$21.51, 20 bars
++$31.79, 25 bars +$30.50, 30 bars +$26.07), not a tuned spike, and it beats
+the delay-only control (sell everything at the second touch of the target,
++$15.37). Honest caveat: the gain is concentrated in the first half
+(H1 +$32.10 vs +$18.23); the second half is near-flat (H2 −$0.26 vs
++$0.78) because its single trip tops out at +0.29% gross — near-breakeven
+under any exit on this window.
 
 ## Run it
 
