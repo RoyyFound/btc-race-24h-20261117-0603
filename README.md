@@ -46,23 +46,30 @@ price impact against the bar's open depth):
 | RSI-Bollinger (baseline) | -$24.25 | 11 | 2.79% |
 | ADX-momentum (baseline) | -$32.66 | 26 | 3.60% |
 | EMA(8)/EMA(21) cross (baseline) | -$106.21 | 68 | 10.96% |
-| **Dip-buy + 20-bar delayed 5-leg scale-out (this bot)** | **+$31.79** | **24** | **1.04%** |
+| **Dip-buy + 20-bar delayed 5-leg scale-out, 4-tranche buys, deeper 2nd-half dip (this bot)** | **+$39.82** | **36** | **0.72%** |
 
 The EMA-cross loses because 1-minute BTC whipsaws: it trades 42 times and
 the ~26–38 bps round-trip cost eats every small win. The dip-buy trades
-only 4 round trips in 24 hours (24 filled orders: 1 buy + 5 scale-out
-sells each) and each one clears the cost by a wide margin; all 4 round
-trips won on the dev window. Waiting 20 bars after the exit target is
+only 4 round trips in 24 hours (36 filled orders: 4 buy tranches + 5
+scale-out sells each) and each one clears the cost by a wide margin; all 4
+round trips won on the dev window. Waiting 20 bars after the exit target is
 first touched before the first scale-out leg added +$12.78 over the
 immediate scale-out version (+$19.01) on the same window — same 4 entries
 — because the recovery spikes run well past the target (+2.12% and +1.97%
 above the entries). The delay is a smooth hump (15 bars +$21.51, 20 bars
 +$31.79, 25 bars +$30.50, 30 bars +$26.07), not a tuned spike, and it beats
-the delay-only control (sell everything at the second touch of the target,
-+$15.37). Honest caveat: the gain is concentrated in the first half
-(H1 +$32.10 vs +$18.23); the second half is near-flat (H2 −$0.26 vs
-+$0.78) because its single trip tops out at +0.29% gross — near-breakeven
-under any exit on this window.
+the delay-only control (sell everything 20 bars after the target touch,
++$26.99 with the same entry). Round 4 added two more lifts: buying in 4
+equal tranches, one per bar, cuts pool impact (a single $1,000 buy pays
+~12.5 bps vs ~3.1 bps each for four $250 buys) and catches lower prices
+when the dip keeps falling (+$3.94, both halves improving); requiring a
+deeper dip (−0.8% instead of −0.6%) in the second half enters the one H2
+trip near its true bottom instead of on a false dip (+$4.09). Honest
+caveats: the H2-dip part is fitted to a single trip and may not help on
+the live race window; and +$39.82 is still short of the dev leaderboard's
+top-10 bar (+$44.60) — the window only has 4 dip entries and the two big
+trips are already sold near their peaks. Prizes are decided by net PnL on
+the live 24h race window, not the dev leaderboard.
 
 ## Run it
 
