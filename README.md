@@ -16,9 +16,12 @@ one thing, patiently:
 2. **Wait for the bounce to start.** The dip alone is not enough: the close
    must also be above the previous bar's close (an up-tick), so we do not
    catch a falling knife mid-drop.
-3. **Take the bounce, don't marry it.** Sell the whole position when the
-   close climbs back to 0.4% above the same 120-bar average, or cut it at
-   1.5% below the entry price, whichever comes first.
+3. **Take the bounce in three legs, don't dump it.** Sell a third of the
+   position when the close climbs back to 0.4% above the same 120-bar
+   average, another third on the next bar, and the rest on the bar after
+   that — banking part of the bounce at the target while letting the rest
+   ride two more bars. Cut the whole position at 1.5% below the entry
+   price, even in the middle of a scale-out, whichever comes first.
 4. **One position, full size.** Long only, at most one open position, sized
    to the full cash balance, because a $1,000 account cannot afford to
    dribble: every fill pays a fixed fee + slippage + pool impact, so half
@@ -43,12 +46,16 @@ price impact against the bar's open depth):
 | RSI-Bollinger (baseline) | -$24.25 | 11 | 2.79% |
 | ADX-momentum (baseline) | -$32.66 | 26 | 3.60% |
 | EMA(8)/EMA(21) cross (baseline) | -$106.21 | 68 | 10.96% |
-| **Dip-buy + bounce gate (this bot)** | **+$14.61** | **8** | **1.04%** |
+| **Dip-buy + 3-leg scale-out (this bot)** | **+$18.37** | **16** | **0.94%** |
 
 The EMA-cross loses because 1-minute BTC whipsaws: it trades 42 times and
 the ~26–38 bps round-trip cost eats every small win. The dip-buy trades
-only 4 round trips in 24 hours and each one clears the cost by a wide
-margin.
+only 4 round trips in 24 hours (16 filled orders: 1 buy + 3 scale-out
+sells each) and each one clears the cost by a wide margin; all 4 round
+trips won on the dev window. Selling in three legs instead of all at once
+added +$3.76 over the single-exit version (+$14.61) on the same window —
+same 4 entries, every round trip better — because the bounce usually runs
+a little past the first touch of the target before fading.
 
 ## Run it
 
