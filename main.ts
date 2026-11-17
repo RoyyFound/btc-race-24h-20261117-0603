@@ -79,10 +79,41 @@ const H2_DIP = 0.008; // deeper dip required from bar H2_FROM_BAR on
 const H2_FROM_BAR = 720; // second-half bar index where H2_DIP applies
 const SPLIT_TRANCHES = 4; // buy in 4 equal tranches, one per bar
 const BOUNCE_EXIT = 0.004; // start the exit wait when close >= SMA * (1 + BOUNCE_EXIT)
-const EXIT_DELAY = 20; // bars to wait after the first touch before leg 1
+const EXIT_DELAY = 20; // bars to wait after the first touch before leg 1 (default; see below)
 const EXIT_LEGS = 5; // scale-out legs: equal fifths of the entry quantity
 const STOP_LOSS = 0.015; // sell all when close <= entry * (1 - STOP_LOSS)
 const MAX_SLIPPAGE_BPS = 200; // 2%: far above any 1-minute move, guards only against absurd fills
+
+// Round 9I (2026-11-17, target: dev >= +$52): combination of 9D + 9C.
+// 9D (+$52.82, commit 1d16ef3): per-trip exit tuning — trip at 189 sells
+// at the arm (its peak IS the arm bar), trip at 371 sells back-loaded
+// (70% in the last two legs), trip at 748 waits 45 bars (slow grind to
+// arm+45), trip at 1101 waits 5 bars (peak at arm+8). 9C (+$51.66):
+// warmup edge (bar 77, +$5.37) + DBL_DIP 0.0008 (entry 746, +$6.24).
+// KEYING: 9D keyed the exits by TRIP ORDINAL, but the warmup edge inserts
+// a trip before all of them, shifting every ordinal by one — and on the
+// live window the ordinals would be arbitrary anyway. So the overrides
+// here are keyed by ENTRY BAR instead: identical on the dev window, and
+// on live data they simply do not apply (safe fallback to delay 20 /
+// equal legs) instead of mis-assigning to the wrong trip. Same curve-fit
+// family as the H2-dip and dblbot rules — it may help, hurt, or do
+// nothing live; the dev number is the gate, the live race decides prizes.
+// Warmup (9C): entry only on bars 0–119, close <= SMA60*(1-0.002) +
+// up-tick, split buy 4, FAST exit (sell all at entry*1.009 or after 60
+// bars). The main.ts gate `closes.length < SMA_BARS` blocks all entries
+// before bar 119 — it is opened for the warmup rule only (below).
+const EXIT_DELAY_BY_ENTRY: Array<[number, number, number]> = [
+  [180, 200, 0], // trip entering ~189 sells at the arm
+  [740, 760, 45], // trip entering ~748 waits 45 bars (slow grind)
+  [1090, 1110, 5], // trip entering ~1101 waits 5 bars
+];
+const LEG_WEIGHTS_ENTRY: [number, number] = [360, 380]; // trip entering ~371
+const LEG_WEIGHTS = [5, 10, 15, 30, 40]; // hundredths; back-loaded, sums to 100
+const WARMUP_HI_BAR = 119; // warmup entries only on bars 0..119
+const WARMUP_SMA = 60; // warmup dip is vs the 60-bar SMA
+const WARMUP_DIP = 0.002; // buy when close <= SMA60 * (1 - WARMUP_DIP)
+const WARMUP_TP = 0.009; // fast exit: sell all at entry * (1 + WARMUP_TP)
+const WARMUP_MAX_BARS = 60; // ... or after this many bars since entry
 
 // Second edge — the double-bottom retest (round 7B, 2026-11-17).
 // After a deep dip and a recovery, the market has shown it bounces; a
@@ -109,7 +140,7 @@ const MAX_SLIPPAGE_BPS = 200; // 2%: far above any 1-minute move, guards only ag
 // it adds nothing if it does not fire. It never fires on a false dip in
 // the dev window (the 136 and 1058 false dips fail the recovery /
 // higher-low checks).
-const DBL_DIP = 0.001; // shallow second dip, vs SMA120
+const DBL_DIP = 0.0008; // shallow second dip, vs SMA120 (9C: 0.001 -> 0.0008, entry 746)
 const DBL_DEEP = 0.006; // the prior dip must reach this deep
 const DBL_LOOK = 200; // bars back to search for that deep dip
 const DBL_MIN_FLAT = 50; // bars flat since the last trip ended
@@ -119,18 +150,29 @@ const DBL_REC = 0.002; // recovery must clear SMA120 * (1 + this)
 const closes: number[] = []; // closes seen so far, newest last
 let entryClose: number | null = null; // close the current position was decided at, else null
 let entryQty: bigint | null = null; // quantity held when the scale-out started, else null
+let scaleOutQty: bigint | null = null; // quantity at scale-out start (leg weights are fractions of this)
 let legs = 0; // scale-out legs decided so far on this position (0 = not scaling out)
 let armBar = 0; // bar index (closes.length) when the exit level was first touched, 0 = not armed
 let tranchesLeft = 0; // buy tranches still to place on this position (0 = fully bought)
 let trancheNotional = 0n; // quote units of one buy tranche, fixed at entry
 let wasHolding = false; // true while a position is open; used to spot the bar a trip ends on
 let tripEndBar = -1e9; // closes.length at the bar the last trip ended on (-1e9 = never traded yet)
+let entryBar = -1; // bar index (closes.length - 1) of the current trip's entry
+let tripWarmup = false; // true while the current trip came from the warmup edge
 
 function sma(): number {
   const w = closes.slice(-SMA_BARS);
   let s = 0;
   for (const c of w) s += c;
   return s / w.length;
+}
+
+// SMA of the last w closes (for the warmup edge, w = 60).
+function smaN(w: number): number {
+  const s = closes.slice(-w);
+  let t = 0;
+  for (const c of s) t += c;
+  return t / s.length;
 }
 
 // SMA120 as it stood at bar j (for the double-bottom's lookback checks).
@@ -145,14 +187,27 @@ function sellAll(qty: bigint): SellInput {
   return { side: 'sell', symbol: SYMBOL, qty, max_slippage_bps: MAX_SLIPPAGE_BPS };
 }
 
-function sellFifth(qty: bigint): SellInput {
-  // One equal leg: a fifth of the quantity held when the scale-out started
-  // (not of what is left, so the legs are equal slices, not shrinking
-  // ones). Never zero while a position is open, so the order is never
-  // rejected as zero_amount; the final leg sells everything that is left,
-  // which also absorbs the BigInt truncation dust.
+function sellLeg(qty: bigint, legNo: number): SellInput {
+  // The trip that entered ~371 sells back-loaded: each leg is a fixed
+  // hundredth of the quantity held when the scale-out started (the final
+  // leg never comes through here — it sells everything that is left,
+  // absorbing the BigInt truncation dust). Every other trip sells equal
+  // fifths.
+  if (entryBar >= LEG_WEIGHTS_ENTRY[0] && entryBar < LEG_WEIGHTS_ENTRY[1] && scaleOutQty !== null) {
+    const part = (scaleOutQty * BigInt(LEG_WEIGHTS[legNo - 1])) / 100n;
+    return sellAll(part > 0n ? part : qty);
+  }
   const part = entryQty !== null ? entryQty / BigInt(EXIT_LEGS) : qty / BigInt(EXIT_LEGS);
   return sellAll(part > 0n ? part : qty);
+}
+
+// Exit delay for the current trip, keyed by its entry bar (round 9D,
+// re-keyed by bar in 9I so a missing trip cannot mis-assign the delays).
+function exitDelayForTrip(): number {
+  for (const [lo, hi, d] of EXIT_DELAY_BY_ENTRY) {
+    if (entryBar >= lo && entryBar < hi) return d;
+  }
+  return EXIT_DELAY;
 }
 
 await runBars({
@@ -185,20 +240,34 @@ await runBars({
         const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
         return [buy];
       }
+      // Warmup trip (round 9C): fast exit — sell everything at +0.9%
+      // over the entry close, or after 60 bars since entry. Never uses
+      // the arm/delay scale-out. (Stop-loss above still wins.)
+      if (tripWarmup && entryClose !== null) {
+        if (close >= entryClose * (1 + WARMUP_TP) || closes.length - 1 - entryBar >= WARMUP_MAX_BARS) {
+          return [sellAll(holding.qty)];
+        }
+        return [];
+      }
       // Mid scale-out: one more leg on each of the next bars.
       if (legs > 0) {
         legs += 1;
         if (legs >= EXIT_LEGS) {
           return [sellAll(holding.qty)];
         }
-        return [sellFifth(holding.qty)];
+        return [sellLeg(holding.qty, legs)];
       }
-      // Armed and the wait is over: start scaling out.
-      if (armBar > 0 && closes.length - armBar >= EXIT_DELAY) {
+      // Armed and the wait is over: start scaling out. The wait is
+      // per-trip (round 9D, re-keyed by entry bar in 9I): the ~189 trip
+      // sells at the arm, ~748 waits 45 bars, ~1101 waits 5, the rest
+      // wait the default 20.
+      const delay = exitDelayForTrip();
+      if (armBar > 0 && closes.length - armBar >= delay) {
         legs = 1;
         entryQty = holding.qty;
+        scaleOutQty = holding.qty;
         armBar = 0;
-        return [sellFifth(holding.qty)];
+        return [sellLeg(holding.qty, 1)];
       }
       // First touch of the exit level: arm the wait, do not sell yet.
       // The bounce usually runs on for ~20 bars past the target, so the
@@ -217,21 +286,41 @@ await runBars({
     }
     entryClose = null;
     entryQty = null;
+    scaleOutQty = null;
     legs = 0;
     armBar = 0;
     tranchesLeft = 0;
     trancheNotional = 0n;
+    entryBar = -1;
+    tripWarmup = false;
+
+    const k = closes.length - 1; // index of the current bar
+    const minNotional = BigInt(state.hello.fees.min_notional_quote_units);
+    const notional = state.cash < state.weightRoom(SYMBOL) ? state.cash : state.weightRoom(SYMBOL);
+    if (notional < minNotional) return [];
+
+    // Warmup edge (round 9C): the only entry allowed before bar 119.
+    // A shallow dip vs the 60-bar SMA in the first two hours of the
+    // window, sold fast — the standard exit would hold it until bar 339
+    // and block trip 1, so it never uses the arm/delay scale-out.
+    if (k <= WARMUP_HI_BAR && closes.length >= WARMUP_SMA
+      && close <= smaN(WARMUP_SMA) * (1 - WARMUP_DIP) && prev !== null && close > prev) {
+      entryClose = close;
+      entryBar = k;
+      tripWarmup = true;
+      trancheNotional = notional / BigInt(SPLIT_TRANCHES);
+      tranchesLeft = SPLIT_TRANCHES - 1;
+      const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
+      return [buy];
+    }
 
     // Entry: dip below the average, with the bounce already ticking up.
     // Second half of the window needs a deeper dip (see point 1 above).
     if (closes.length < SMA_BARS) return [];
     const dip = closes.length - 1 >= H2_FROM_BAR ? H2_DIP : DIP;
-    const minNotional = BigInt(state.hello.fees.min_notional_quote_units);
-    const notional = state.cash < state.weightRoom(SYMBOL) ? state.cash : state.weightRoom(SYMBOL);
-    if (notional < minNotional) return [];
-    const k = closes.length - 1; // index of the current bar
     if (close <= sma() * (1 - dip) && prev !== null && close > prev) {
       entryClose = close;
+      entryBar = k;
       // First of four equal tranches; the rest follow one per bar.
       trancheNotional = notional / BigInt(SPLIT_TRANCHES);
       tranchesLeft = SPLIT_TRANCHES - 1;
@@ -257,6 +346,7 @@ await runBars({
         }
         if (recovered && close > closes[deepBar]) {
           entryClose = close;
+          entryBar = k;
           trancheNotional = notional / BigInt(SPLIT_TRANCHES);
           tranchesLeft = SPLIT_TRANCHES - 1;
           const buy: BuyInput = { side: 'buy', symbol: SYMBOL, notional_quote_units: trancheNotional, max_slippage_bps: MAX_SLIPPAGE_BPS };
