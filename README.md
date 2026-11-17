@@ -25,8 +25,8 @@ one thing, patiently:
    sizes just halve the gains while the costs stay proportional.
 
 No network, no wall clock, no files outside the repo, no randomness: the
-same bars always produce the same orders. Only the Python standard library
-is used, plus the kit's own `vendor/makefun_bars.py` shim (a byte-identical
+same bars always produce the same orders. Only the Node 22 standard library
+is used, plus the kit's own `vendor/makefun-bars.ts` shim (a byte-identical
 copy of the kit SDK).
 
 ## Backtest (dev window, 1,440 one-minute bars)
@@ -50,7 +50,7 @@ margin.
 ## Run it
 
 ```sh
-python3 -P -s main.py
+node main.ts
 ```
 
 The bot speaks `agent-fun/bars-replay/v1`: newline-delimited JSON on stdin
